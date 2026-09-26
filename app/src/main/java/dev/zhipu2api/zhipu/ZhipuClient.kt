@@ -239,6 +239,25 @@ class ZhipuClient private constructor(private val context: Context) {
     return origSend.apply(this, arguments);
   };
 
+  // React 受控组件取值：骗过 _valueTracker，让 React 认为值真的变了
+  function setNativeValue(el, value){
+    var proto = (el.tagName === 'TEXTAREA') ? window.HTMLTextAreaElement.prototype
+              : window.HTMLInputElement.prototype;
+    var desc = Object.getOwnPropertyDescriptor(proto, 'value');
+    if (desc && desc.set) desc.set.call(el, value);
+    else el.value = value;
+    if (el._valueTracker) el._valueTracker.setValue('');
+  }
+
+  function fireInput(el, text){
+    try {
+      el.dispatchEvent(new InputEvent('input', {bubbles:true, cancelable:true, inputType:'insertText', data:text}));
+    } catch(e){
+      el.dispatchEvent(new Event('input', {bubbles:true}));
+    }
+    el.dispatchEvent(new Event('change', {bubbles:true}));
+  }
+
   window.__ZP_SEND__ = function(text, search){
     try {
       ZhipuNative.onLog('__ZP_SEND__ 被调用，search=' + search);
@@ -247,27 +266,29 @@ class ZhipuClient private constructor(private val context: Context) {
       if (!box) { ZhipuNative.onDone('找不到输入框，请确认已登录且停留在对话页'); return; }
       ZhipuNative.onLog('找到输入框 tag=' + box.tagName);
       box.focus();
-      if (box.tagName === 'TEXTAREA') {
-        var setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value').set;
-        setter.call(box, text);
-        box.dispatchEvent(new Event('input', {bubbles:true}));
+      if (box.tagName === 'TEXTAREA' || box.tagName === 'INPUT') {
+        setNativeValue(box, text);
+        fireInput(box, text);
       } else {
         box.innerHTML = '';
-        document.execCommand('insertText', false, text);
-        box.dispatchEvent(new Event('input', {bubbles:true}));
+        try { document.execCommand('insertText', false, text); } catch(e){}
+        if (!box.innerText) { box.textContent = text; }
+        fireInput(box, text);
       }
+      ZhipuNative.onLog('已填值，当前长度=' + (box.value !== undefined ? box.value.length : box.innerText.length));
       setTimeout(function(){
-        // 智谱输入框在 textarea 的兄弟/父级找发送按钮
-        var scope = box.closest('form') || box.parentElement || document;
-        var btn = scope.querySelector('button[type="submit"]') ||
-                  document.querySelector('button[aria-label*="发送"]') ||
-                  document.querySelector('[class*="send"]');
-        if (btn) { ZhipuNative.onLog('点击发送按钮'); btn.click(); }
-        else {
-          ZhipuNative.onLog('未找到按钮，改用回车');
-          box.dispatchEvent(new KeyboardEvent('keydown', {key:'Enter', code:'Enter', keyCode:13, which:13, bubbles:true}));
-        }
-      }, 300);
+        // 优先回车发送（聊天框最认这个）
+        ZhipuNative.onLog('尝试回车发送');
+        box.dispatchEvent(new KeyboardEvent('keydown', {key:'Enter', code:'Enter', keyCode:13, which:13, bubbles:true, cancelable:true}));
+        // 兜底：也点一下发送按钮（有些前端只认点击）
+        try {
+          var scope = box.closest('form') || box.parentElement || document;
+          var btn = scope.querySelector('button[type="submit"]') ||
+                    document.querySelector('button[aria-label*="发送"]') ||
+                    document.querySelector('[class*="send"]');
+          if (btn) { ZhipuNative.onLog('同时点击发送按钮'); btn.click(); }
+        } catch(e){}
+      }, 400);
     } catch(e){ ZhipuNative.onDone('驱动发送失败:'+e.message); }
   };
 
