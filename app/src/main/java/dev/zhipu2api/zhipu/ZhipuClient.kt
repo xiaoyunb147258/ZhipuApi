@@ -261,10 +261,30 @@ class ZhipuClient private constructor(private val context: Context) {
   window.__ZP_SEND__ = function(text, search){
     try {
       ZhipuNative.onLog('__ZP_SEND__ 被调用，search=' + search);
-      var box = document.querySelector('textarea') ||
-                document.querySelector('[contenteditable="true"]');
+      // 诊断：列出页面上所有候选输入框
+      var tas = document.querySelectorAll('textarea');
+      ZhipuNative.onLog('textarea 数量=' + tas.length);
+      for (var ti=0; ti<tas.length; ti++){
+        var t = tas[ti];
+        var r = t.getBoundingClientRect();
+        ZhipuNative.onLog('  [' + ti + '] ph="' + (t.placeholder||'') + '" w=' + Math.round(r.width) + ' h=' + Math.round(r.height) + ' valLen=' + t.value.length + ' cls=' + (t.className||'').substring(0,40));
+      }
+      var ces = document.querySelectorAll('[contenteditable="true"]');
+      ZhipuNative.onLog('contenteditable 数量=' + ces.length);
+      for (var ci=0; ci<ces.length; ci++){
+        var e = ces[ci];
+        var r2 = e.getBoundingClientRect();
+        ZhipuNative.onLog('  ce[' + ci + '] w=' + Math.round(r2.width) + ' h=' + Math.round(r2.height) + ' cls=' + (e.className||'').substring(0,40));
+      }
+      // 选可见的 textarea（宽高大于0且值不太长）
+      var box = null;
+      for (var k=tas.length-1; k>=0; k--){
+        var rr = tas[k].getBoundingClientRect();
+        if (rr.width > 0 && rr.height > 0) { box = tas[k]; break; }
+      }
+      if (!box && ces.length > 0) box = ces[0];
       if (!box) { ZhipuNative.onDone('找不到输入框，请确认已登录且停留在对话页'); return; }
-      ZhipuNative.onLog('找到输入框 tag=' + box.tagName);
+      ZhipuNative.onLog('选中输入框 tag=' + box.tagName + ' valLen=' + (box.value||'').length);
       box.focus();
       if (box.tagName === 'TEXTAREA' || box.tagName === 'INPUT') {
         setNativeValue(box, text);
