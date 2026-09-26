@@ -155,32 +155,58 @@ class ZhipuClient private constructor(private val context: Context) {
   var origOpen = XMLHttpRequest.prototype.open;
   var origSend = XMLHttpRequest.prototype.send;
 
+  // 智谱回复是"全量快照"，需自算增量
+  var __zp_rendered = '';
+
+  function computeDelta(prev, cur){
+    if (cur === prev) return '';
+    if (prev && cur.indexOf(prev) === 0) return cur.substring(prev.length);
+    return cur;
+  }
+
+  // 从一条 SSE data JSON 里取"可见回答"，返回 {text, done}
   function extractText(json){
     try {
       var o = JSON.parse(json);
-      if (!o || !o.parts) return '';
-      var out = '';
+      if (!o || !o.parts) {
+        return {text:'', done: (o && o.status && (o.status==='finish'||o.status==='finished'))};
+      }
+      var snapshot = '';
+      var done = false;
       for (var i=0;i<o.parts.length;i++){
         var p = o.parts[i];
-        if (p.role !== 'assistant') continue;
+        var ps = (p.status||'').toLowerCase();
         var c = p.content || [];
         for (var j=0;j<c.length;j++){
-          if (c[j].type === 'text' && c[j].text) out += c[j].text;
+          var it = c[j];
+          var tp = (it.type||'').toLowerCase();
+          if (tp !== 'text') continue;      // 跳过 think / tool_calls
+          var t = it.text || '';
+          if (t) snapshot = t;
+          if (ps==='finish'||ps==='finished') done = true;
         }
       }
-      return out;
-    } catch(e){ return ''; }
+      var st = (o.status||'').toLowerCase();
+      if (st==='finish'||st==='finished') done = true;
+      return {text: snapshot, done: done};
+    } catch(e){ return {text:'', done:false}; }
   }
 
   function feed(chunk){
     try {
-      var parts = chunk.split('\n');
-      for (var i=0;i<parts.length;i++){
-        var line = parts[i].trim();
-        if (line.indexOf('data:') === 0) {
-          var t = extractText(line.substring(5).trim());
-          if (t) ZhipuNative.onDelta(t);
+      var lines = chunk.split('\n');
+      for (var i=0;i<lines.length;i++){
+        var line = lines[i].trim();
+        if (line.indexOf('data:') !== 0) continue;
+        var payload = line.substring(5).trim();
+        if (!payload) continue;
+        var r = extractText(payload);
+        if (r.text) {
+          var d = computeDelta(__zp_rendered, r.text);
+          __zp_rendered = r.text;
+          if (d) ZhipuNative.onDelta(d);
         }
+        if (r.done) { ZhipuNative.onDone(''); }
       }
     } catch(e){}
   }
@@ -209,11 +235,11 @@ class ZhipuClient private constructor(private val context: Context) {
     try {
       var input = arguments[0], init = arguments[1] || {};
       var url = typeof input === 'string' ? input : (input && input.url);
-      ZhipuNative.onLog('fetch -> ' + url);
       if (url && url.indexOf('assistant/stream') >= 0) {
-        ZhipuNative.onLog('命中 fetch 流: ' + url);
+        ZhipuNative.onLog('命中 fetch 流');
+        try { __zp_startDomFallback(); } catch(e){}
         var ret = origFetch.apply(this, arguments);
-        try { ret.then(function(resp){ ZhipuNative.onLog('fetch 响应 status=' + (resp && resp.status)); readStream(resp); }); } catch(e){}
+        try { ret.then(function(resp){ readStream(resp); }); } catch(e){}
         return ret;
       }
     } catch(e){}
@@ -226,18 +252,56 @@ class ZhipuClient private constructor(private val context: Context) {
   };
   XMLHttpRequest.prototype.send = function(){
     try {
-      ZhipuNative.onLog('xhr -> ' + this.__zp_url);
       if (this.__zp_url && this.__zp_url.indexOf('assistant/stream') >= 0) {
         ZhipuNative.onLog('命中 xhr 流');
+        try { __zp_startDomFallback(); } catch(e){}
         var self = this;
         this.addEventListener('progress', function(){
           try { feed(self.responseText.substring(self.__zp_pos||0)); self.__zp_pos = self.responseText.length; } catch(e){}
         });
-        this.addEventListener('load', function(){ ZhipuNative.onDone(''); });
+        this.addEventListener('load', function(){
+          try { feed(self.responseText.substring(self.__zp_pos||0)); } catch(e){}
+          ZhipuNative.onDone('');
+        });
       }
     } catch(e){}
     return origSend.apply(this, arguments);
   };
+
+  // DOM 兜底：网络流若没触发 onDone，就盯着回复区文字，涨到稳定就结束
+  var __zp_domTimer = null;
+  var __zp_domLast = '';
+  var __zp_domStable = 0;
+  function __zp_startDomFallback(){
+    if (__zp_domTimer) return;
+    __zp_domTimer = setInterval(function(){
+      try {
+        var el = document.querySelector('.answer-content-wrap:not(.text-advance-thinking-content) .markdown-body') ||
+                 document.querySelector('.markdown-body');
+        if (!el) return;
+        var txt = (el.innerText || '').trim();
+        if (!txt) return;
+        if (txt !== __zp_domLast) {
+          __zp_domLast = txt;
+          __zp_domStable = 0;
+          var d = computeDelta(__zp_rendered, txt);
+          __zp_rendered = txt;
+          if (d) ZhipuNative.onDelta(d);
+        } else {
+          __zp_domStable++;
+          // 连续 4 次(约2秒)无变化 → 认为结束
+          if (__zp_domStable >= 4 && txt.length > 0) {
+            clearInterval(__zp_domTimer); __zp_domTimer = null;
+            ZhipuNative.onDone('');
+          }
+        }
+      } catch(e){}
+    }, 500);
+  }
+  function __zp_resetDom(){
+    if (__zp_domTimer) { clearInterval(__zp_domTimer); __zp_domTimer = null; }
+    __zp_domLast = ''; __zp_domStable = 0; __zp_rendered = '';
+  }
 
   // React 受控组件取值：骗过 _valueTracker，让 React 认为值真的变了
   function setNativeValue(el, value){
@@ -258,57 +322,37 @@ class ZhipuClient private constructor(private val context: Context) {
     el.dispatchEvent(new Event('change', {bubbles:true}));
   }
 
+  // 智谱输入框/发送键的精确选择器（源自 universal-web-api 站点配置）
+  var SEL_INPUT = '.input-box-inner textarea';
+  var SEL_SEND  = '.enter .enter-icon-container, .enter-icon-container, img.enter_icon';
+
+  function $(sel){ try { return document.querySelector(sel); } catch(e){ return null; } }
+
   window.__ZP_SEND__ = function(text, search){
     try {
       ZhipuNative.onLog('__ZP_SEND__ 被调用，search=' + search);
-      // 诊断：列出页面上所有候选输入框
-      var tas = document.querySelectorAll('textarea');
-      ZhipuNative.onLog('textarea 数量=' + tas.length);
-      for (var ti=0; ti<tas.length; ti++){
-        var t = tas[ti];
-        var r = t.getBoundingClientRect();
-        ZhipuNative.onLog('  [' + ti + '] ph="' + (t.placeholder||'') + '" w=' + Math.round(r.width) + ' h=' + Math.round(r.height) + ' valLen=' + t.value.length + ' cls=' + (t.className||'').substring(0,40));
-      }
-      var ces = document.querySelectorAll('[contenteditable="true"]');
-      ZhipuNative.onLog('contenteditable 数量=' + ces.length);
-      for (var ci=0; ci<ces.length; ci++){
-        var e = ces[ci];
-        var r2 = e.getBoundingClientRect();
-        ZhipuNative.onLog('  ce[' + ci + '] w=' + Math.round(r2.width) + ' h=' + Math.round(r2.height) + ' cls=' + (e.className||'').substring(0,40));
-      }
-      // 选可见的 textarea（宽高大于0且值不太长）
-      var box = null;
-      for (var k=tas.length-1; k>=0; k--){
-        var rr = tas[k].getBoundingClientRect();
-        if (rr.width > 0 && rr.height > 0) { box = tas[k]; break; }
-      }
-      if (!box && ces.length > 0) box = ces[0];
-      if (!box) { ZhipuNative.onDone('找不到输入框，请确认已登录且停留在对话页'); return; }
-      ZhipuNative.onLog('选中输入框 tag=' + box.tagName + ' valLen=' + (box.value||'').length);
+      __zp_resetDom();
+      var box = $(SEL_INPUT);
+      if (!box) { ZhipuNative.onDone('找不到输入框(' + SEL_INPUT + ')，请确认已登录停在对话页'); return; }
+      ZhipuNative.onLog('找到输入框，填入');
       box.focus();
-      if (box.tagName === 'TEXTAREA' || box.tagName === 'INPUT') {
-        setNativeValue(box, text);
-        fireInput(box, text);
-      } else {
-        box.innerHTML = '';
-        try { document.execCommand('insertText', false, text); } catch(e){}
-        if (!box.innerText) { box.textContent = text; }
-        fireInput(box, text);
-      }
-      ZhipuNative.onLog('已填值，当前长度=' + (box.value !== undefined ? box.value.length : box.innerText.length));
+      setNativeValue(box, text);
+      fireInput(box, text);
+      ZhipuNative.onLog('已填值，长度=' + box.value.length);
+
       setTimeout(function(){
-        // 优先回车发送（聊天框最认这个）
-        ZhipuNative.onLog('尝试回车发送');
-        box.dispatchEvent(new KeyboardEvent('keydown', {key:'Enter', code:'Enter', keyCode:13, which:13, bubbles:true, cancelable:true}));
-        // 兜底：也点一下发送按钮（有些前端只认点击）
-        try {
-          var scope = box.closest('form') || box.parentElement || document;
-          var btn = scope.querySelector('button[type="submit"]') ||
-                    document.querySelector('button[aria-label*="发送"]') ||
-                    document.querySelector('[class*="send"]');
-          if (btn) { ZhipuNative.onLog('同时点击发送按钮'); btn.click(); }
-        } catch(e){}
-      }, 400);
+        var btn = $(SEL_SEND);
+        if (btn) {
+          ZhipuNative.onLog('点击发送键');
+          try { btn.click(); } catch(e){}
+          try { btn.dispatchEvent(new MouseEvent('click', {bubbles:true, cancelable:true, view:window})); } catch(e){}
+        } else {
+          ZhipuNative.onLog('未找到发送键，改用回车');
+          box.dispatchEvent(new KeyboardEvent('keydown', {key:'Enter', code:'Enter', keyCode:13, which:13, bubbles:true, cancelable:true}));
+          box.dispatchEvent(new KeyboardEvent('keypress', {key:'Enter', code:'Enter', keyCode:13, which:13, bubbles:true, cancelable:true}));
+          box.dispatchEvent(new KeyboardEvent('keyup', {key:'Enter', code:'Enter', keyCode:13, which:13, bubbles:true, cancelable:true}));
+        }
+      }, 500);
     } catch(e){ ZhipuNative.onDone('驱动发送失败:'+e.message); }
   };
 
