@@ -83,7 +83,8 @@ class ZhipuClient private constructor(private val context: Context) {
                 override fun onPageFinished(view: WebView?, url: String?) {
                     if (url != null && url.contains("chatglm.cn")) {
                         // 反复注入，直到钩子真正就位（解决 SPA 时序）
-                        startInjectLoop(view)
+                        val target = view ?: wv
+                        startInjectLoop(target)
                     }
                 }
             }
