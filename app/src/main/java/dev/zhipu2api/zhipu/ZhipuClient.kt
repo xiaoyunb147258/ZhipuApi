@@ -209,9 +209,11 @@ class ZhipuClient private constructor(private val context: Context) {
     try {
       var input = arguments[0], init = arguments[1] || {};
       var url = typeof input === 'string' ? input : (input && input.url);
+      ZhipuNative.onLog('fetch -> ' + url);
       if (url && url.indexOf('assistant/stream') >= 0) {
+        ZhipuNative.onLog('命中 fetch 流: ' + url);
         var ret = origFetch.apply(this, arguments);
-        try { ret.then(function(resp){ readStream(resp); }); } catch(e){}
+        try { ret.then(function(resp){ ZhipuNative.onLog('fetch 响应 status=' + (resp && resp.status)); readStream(resp); }); } catch(e){}
         return ret;
       }
     } catch(e){}
@@ -224,7 +226,9 @@ class ZhipuClient private constructor(private val context: Context) {
   };
   XMLHttpRequest.prototype.send = function(){
     try {
+      ZhipuNative.onLog('xhr -> ' + this.__zp_url);
       if (this.__zp_url && this.__zp_url.indexOf('assistant/stream') >= 0) {
+        ZhipuNative.onLog('命中 xhr 流');
         var self = this;
         this.addEventListener('progress', function(){
           try { feed(self.responseText.substring(self.__zp_pos||0)); self.__zp_pos = self.responseText.length; } catch(e){}
@@ -237,9 +241,11 @@ class ZhipuClient private constructor(private val context: Context) {
 
   window.__ZP_SEND__ = function(text, search){
     try {
+      ZhipuNative.onLog('__ZP_SEND__ 被调用，search=' + search);
       var box = document.querySelector('textarea') ||
                 document.querySelector('[contenteditable="true"]');
       if (!box) { ZhipuNative.onDone('找不到输入框，请确认已登录且停留在对话页'); return; }
+      ZhipuNative.onLog('找到输入框 tag=' + box.tagName);
       box.focus();
       if (box.tagName === 'TEXTAREA') {
         var setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value').set;
@@ -256,8 +262,9 @@ class ZhipuClient private constructor(private val context: Context) {
         var btn = scope.querySelector('button[type="submit"]') ||
                   document.querySelector('button[aria-label*="发送"]') ||
                   document.querySelector('[class*="send"]');
-        if (btn) { btn.click(); }
+        if (btn) { ZhipuNative.onLog('点击发送按钮'); btn.click(); }
         else {
+          ZhipuNative.onLog('未找到按钮，改用回车');
           box.dispatchEvent(new KeyboardEvent('keydown', {key:'Enter', code:'Enter', keyCode:13, which:13, bubbles:true}));
         }
       }, 300);
