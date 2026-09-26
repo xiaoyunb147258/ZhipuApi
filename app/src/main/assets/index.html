@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>智谱 API 网关</title>
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+<!-- 顶部 AppBar -->
+<header class="appbar">
+  <div class="appbar__lead">
+    <div class="avatar">智</div>
+    <div class="appbar__titles">
+      <h1>智谱 API 网关</h1>
+      <p id="appSub">本地 OpenAI 兼容</p>
+    </div>
+  </div>
+  <button class="icon-btn" id="navToggle" title="启动/停止">
+    <span class="dot-ind" id="appDot"></span>
+  </button>
+</header>
+
+<!-- 内容区 -->
+<main class="content">
+
+  <!-- 控制台 -->
+  <section class="view is-active" id="view-console">
+    <div class="hero-card" id="statusCard">
+      <div class="hero-card__top">
+        <span class="chip" id="statusChip">未运行</span>
+        <span class="chip chip--outline" id="tokenChip">未登录</span>
+      </div>
+      <div class="hero-card__big" id="baseUrlBig">http://127.0.0.1:9980/v1</div>
+      <div class="hero-card__meta" id="statusMeta">端口 9980 · 已处理 0 次请求</div>
+    </div>
+
+    <div class="btn-row">
+      <button class="btn btn--filled" id="runBtn"><span>启动网关</span></button>
+      <button class="btn btn--tonal" id="restartBtn"><span>重启</span></button>
+      <button class="btn btn--text" id="stopBtn"><span>停止</span></button>
+    </div>
+
+    <div class="card">
+      <div class="card__title">连接信息</div>
+      <div class="list-item">
+        <div class="list-item__text">
+          <div class="list-item__k">Base URL</div>
+          <div class="list-item__v" id="baseUrl">http://127.0.0.1:9980/v1</div>
+        </div>
+        <button class="icon-btn" data-copy="baseUrl">复制</button>
+      </div>
+      <div class="divider"></div>
+      <div class="list-item">
+        <div class="list-item__text">
+          <div class="list-item__k">API Key</div>
+          <div class="list-item__v" id="apiKeyShow">sk-zhipu-local</div>
+        </div>
+        <button class="icon-btn" data-copy="apiKeyShow">复制</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card__title">账号</div>
+      <p class="card__hint" id="tokenHint">在受控页面登录智谱清言，保持停留在对话页，然后点「完成」。</p>
+      <div class="btn-row">
+        <button class="btn btn--filled" id="loginBtn"><span>登录智谱</span></button>
+        <button class="btn btn--text" id="clearTokenBtn"><span>清除</span></button>
+      </div>
+    </div>
+  </section>
+
+  <!-- 模型 -->
+  <section class="view" id="view-models">
+    <div class="section-title">模型</div>
+    <p class="section-desc">智谱清言当前只有一个模型 GLM。带后缀可控制能力：<code>-think</code> 思考、<code>-search</code> 联网。</p>
+    <div class="card" id="modelList"></div>
+  </section>
+
+  <!-- 设置 -->
+  <section class="view" id="view-settings">
+    <div class="section-title">设置</div>
+    <div class="card">
+      <div class="field">
+        <label>端口</label>
+        <input class="input" id="setPort" type="number" inputmode="numeric" value="9980" />
+      </div>
+      <div class="field">
+        <label>API Key</label>
+        <input class="input" id="setApiKey" type="text" spellcheck="false" />
+      </div>
+      <div class="field">
+        <label>默认模型</label>
+        <select class="input" id="setDefaultModel"></select>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="switch-row">
+        <div class="switch-row__text">
+          <div class="switch-row__t">开机自启</div>
+          <div class="switch-row__s">重启手机后自动拉起网关</div>
+        </div>
+        <label class="switch"><input type="checkbox" id="setAutoStart" /><span></span></label>
+      </div>
+      <div class="divider"></div>
+      <div class="switch-row">
+        <div class="switch-row__text">
+          <div class="switch-row__t">默认联网</div>
+          <div class="switch-row__s">模型名没写 -search 时是否默认联网</div>
+        </div>
+        <label class="switch"><input type="checkbox" id="setUseSearch" /><span></span></label>
+      </div>
+      <div class="divider"></div>
+      <div class="switch-row">
+        <div class="switch-row__text">
+          <div class="switch-row__t">显示悬浮窗</div>
+          <div class="switch-row__s">屏幕上常驻显示网关地址</div>
+        </div>
+        <label class="switch"><input type="checkbox" id="setShowFloat" /><span></span></label>
+      </div>
+      <div class="divider"></div>
+      <div class="switch-row">
+        <div class="switch-row__text">
+          <div class="switch-row__t">后台保活</div>
+          <div class="switch-row__s">忽略电池优化，防止被系统杀</div>
+        </div>
+        <label class="switch"><input type="checkbox" id="setBattery" /><span></span></label>
+      </div>
+    </div>
+
+    <button class="btn btn--filled btn--block" id="saveSettings"><span>保存设置</span></button>
+
+    <div class="section-title" style="margin-top:24px">运行日志</div>
+    <div class="card">
+      <pre class="logs" id="logBody">—</pre>
+      <button class="btn btn--text" id="clearLogs"><span>清空日志</span></button>
+    </div>
+  </section>
+
+</main>
+
+<!-- 底部导航（Material 3） -->
+<nav class="bottom-nav">
+  <button class="bnav is-active" data-view="console">
+    <span class="bnav__icon">▣</span><span class="bnav__label">控制台</span>
+  </button>
+  <button class="bnav" data-view="models">
+    <span class="bnav__icon">◈</span><span class="bnav__label">模型</span>
+  </button>
+  <button class="bnav" data-view="settings">
+    <span class="bnav__icon">⚙</span><span class="bnav__label">设置</span>
+  </button>
+</nav>
+
+<!-- FAB -->
+<button class="fab" id="fab"><span id="fabIcon">▶</span></button>
+
+<div class="toasts" id="toasts"></div>
+
+<script src="app.js"></script>
+</body>
+</html>
